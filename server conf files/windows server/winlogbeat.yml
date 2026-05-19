@@ -1,0 +1,8 @@
+winlogbeat.event_logs:
+  - name: Security
+    event_id: 4624, 4625
+
+output.logstash:
+  hosts: ["192.168.230.1:5044"]
+
+logging.level: info

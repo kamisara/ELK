@@ -1,0 +1,22 @@
+# INPUTS SECTION
+# Tells Filebeat WHAT to read
+filebeat.inputs:
+  - type: log              # Read from log files
+    enabled: true          # Turn this input on
+    paths:
+      - /var/log/nginx/access.log  # Read THIS specific file
+    tags: ["nginx", "webserver"]   # Label these logs for easy filtering in Kibana
+# OUTPUT SECTION
+# Tells Filebeat WHERE to send the logs
+output.logstash:
+  hosts: ["192.168.230.1:5044"]  # Send to Logstash on your Windows host
+                                  # 192.168.230.1 = your Windows PC
+                                  # 5044 = Logstash port
+# LOGGING SECTION
+# Tells Filebeat how to log its OWN activity
+logging.level: info          # Log normal information
+logging.to_files: true       # Save logs to files
+logging.files:
+  path: /var/log/filebeat    # Where to save Filebeat's own logs
+  name: filebeat             # Log file name
+  keepfiles: 7               # Keep 7 days of logs

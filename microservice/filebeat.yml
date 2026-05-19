@@ -1,0 +1,20 @@
+filebeat.inputs:
+  - type: container
+    enabled: true
+    paths:
+      - /var/lib/docker/containers/*/*.log
+    processors:
+      - add_docker_metadata:
+          host: "unix:///var/run/docker.sock"
+
+processors:
+  - drop_event:
+      when:
+        not:
+          equals:
+            container.name: "checkout-microservice"
+
+output.logstash:
+  hosts: ["logstash:5044"]
+
+logging.level: info

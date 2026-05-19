@@ -1,0 +1,100 @@
+version: "3.8"
+
+volumes:
+  esdata01:
+    driver: local
+  kibanadata:
+    driver: local
+  logstashdata01:
+    driver: local
+  
+
+networks:
+  default:
+    name: elastic
+    external: false
+
+services:
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - cluster.name=${CLUSTER_NAME}
+      - "ES_JAVA_OPTS=-Xms${ES_MEM_LIMIT} -Xmx${ES_MEM_LIMIT}"
+    ports:
+      - "${ES_PORT}:9200"
+    volumes:
+      - esdata01:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200 | grep -q 'cluster_name'"]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:${STACK_VERSION}
+    container_name: logstash
+    ports:
+      - "5044:5044"
+    volumes:
+      - logstashdata01:/usr/share/logstash/data
+      - ./logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+    environment:
+      - xpack.monitoring.enabled=false
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:${STACK_VERSION}
+    container_name: kibana
+    ports:
+      - "${KIBANA_PORT}:5601"
+    volumes:
+      - kibanadata:/usr/share/kibana/data
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}
+      - XPACK_SECURITY_ENCRYPTIONKEY=${ENCRYPTION_KEY}
+      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=${ENCRYPTION_KEY}
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  checkout-microservice:
+      build: 
+        context: ./microservice
+        dockerfile: DockerFile
+      container_name: checkout-microservice
+      ports:
+        - "5000:5000"
+      networks:
+        - default
+      depends_on:
+        elasticsearch:
+          condition: service_healthy
+      logging:
+        driver: "json-file"
+        options:
+          max-size: "10m"
+          max-file: "3"
+  filebeat:
+      image: docker.elastic.co/beats/filebeat:${STACK_VERSION}
+      container_name: filebeat
+      user: root
+      command: filebeat -e --strict.perms=false
+      volumes:
+        - ./microservice/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+        - /var/lib/docker/containers:/var/lib/docker/containers:ro
+        - /var/run/docker.sock:/var/run/docker.sock:ro
+      depends_on:
+        elasticsearch:
+          condition: service_healthy
+        logstash:
+          condition: service_started
+      networks:
+        - default
