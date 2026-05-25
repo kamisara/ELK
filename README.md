@@ -1,325 +1,299 @@
-# ELK Hub
+```markdown
+# ELK Stack — Centralized Observability Lab
 
-ELK Hub is a lab project for collecting and analyzing logs from three sources:
+A lab implementation for Systems Reliability Engineering (SRE) — Chapter 5.
+This project demonstrates centralized log collection and analysis across three
+distinct telemetry sources using the ELK Stack deployed via Docker Compose.
 
-- A Dockerized `checkout-microservice`
-- An Nginx server running on a separate Ubuntu VM
-- A Windows Server VM sending Windows Security events
+## Overview
 
-Logs are shipped to Logstash, parsed/enriched, stored in Elasticsearch, and explored in Kibana.
+This lab simulates a real-world observability pipeline for an e-commerce platform
+experiencing intermittent checkout failures. Three data sources feed into a
+centralized logging hub, enabling cross-source correlation and real-time analysis
+in Kibana.
 
-## Architecture
+**Data Sources:**
+- A containerized Python/Flask checkout microservice (Docker)
+- An Nginx web server running on an Ubuntu edge node
+- A Windows machine shipping Security Event logs
 
-```text
-Checkout microservice container
-  -> Filebeat container
-  -> Logstash :5044
-  -> Elasticsearch
-  -> Kibana
+## Pipeline Architecture
 
-Ubuntu Nginx VM
-  -> Filebeat on VM
-  -> Logstash :5044 on ELK host
-  -> Elasticsearch
-  -> Kibana
-
-Windows Server VM
-  -> Winlogbeat on VM
-  -> Logstash :5044 on ELK host
-  -> Elasticsearch
-  -> Kibana
+```
+[Checkout Microservice]
+        |
+   Filebeat (Docker container)
+        |
+        v
+[Logstash :5044] <---- Filebeat (Ubuntu Nginx VM)
+        |        <---- Winlogbeat (Windows Machine)
+        v
+[Elasticsearch]
+        |
+        v
+   [Kibana :5601]
 ```
 
-## Project Structure
+## Repository Layout
 
-```text
+```
 .
-+-- docker-compose.yml
-+-- .env
-+-- logstash.conf
-+-- microservice/
-|   +-- app.py
-|   +-- DockerFile
-|   +-- filebeat.yml
-|   +-- generate_traffic.ps1
-|   +-- requirements.txt
-+-- server conf files/
-    +-- nginx/
-    |   +-- filebeat.yml
-    |   +-- sample_nginx.log
-    +-- windows server/
-        +-- winlogbeat.yml
-        +-- sample_windows_events.txt
+├── docker-compose.yml        # Spins up the full ELK hub + microservice
+├── .env                      # Stack version and port configuration
+├── logstash.conf             # Pipeline: input → grok/json filter → ES output
+├── microservice/
+│   ├── app.py                # Flask checkout app (success/timeout/payment_failed)
+│   ├── DockerFile            # Container image definition
+│   ├── filebeat.yml          # Reads Docker container logs, ships to Logstash
+│   ├── generate_traffic.ps1  # PowerShell traffic simulator
+│   └── requirements.txt      # Python dependencies (flask)
+└── server conf files/
+    ├── nginx/
+    │   ├── filebeat.yml          # Filebeat config for Ubuntu Nginx VM
+    │   └── sample_nginx.log      # Sample nginx access log for testing
+    └── windows/
+        ├── winlogbeat.yml        # Winlogbeat config for Windows security events
+        └── sample_windows_events.txt  # Sample exported Windows event log
 ```
 
-## Services
+## Stack Components
 
-The Docker Compose stack starts:
+| Container | Port | Role |
+|---|---|---|
+| elasticsearch | 9200 | Log storage and search engine |
+| logstash | 5044 | Log processing and routing |
+| kibana | 5601 | Visualization and dashboards |
+| checkout-microservice | 5000 | Simulated e-commerce backend |
+| filebeat | — | Docker log collector |
 
-- `elasticsearch` on port `9200`
-- `kibana` on port `5601`
-- `logstash` listening for Beats on port `5044`
-- `checkout-microservice` on port `5000`
-- `filebeat`, which reads Docker container logs from the checkout microservice
+## Environment Configuration
 
-The Nginx and Windows Server machines are external VMs. They are not started by Docker Compose.
-
-## Requirements
-
-- Docker Desktop or Docker Engine
-- Docker Compose
-- PowerShell, for the traffic generator
-- Ubuntu VM with Nginx and Filebeat installed
-- Windows Server VM with Winlogbeat installed
-- Network connectivity from both VMs to the ELK host on port `5044`
-
-## Environment
-
-Main settings are stored in `.env`:
+All configurable parameters are stored in `.env`:
 
 ```env
-STACK_VERSION=8.7.1
-CLUSTER_NAME=ELK-cluster
+STACK_VERSION=8.13.0
+CLUSTER_NAME=elk-lab-cluster
 ES_PORT=9200
 KIBANA_PORT=5601
-ES_MEM_LIMIT=1g
+ES_MEM_LIMIT=512m
+KIBANA_PASSWORD=changeme
+ENCRYPTION_KEY=a_very_long_random_string_at_least_32chars
 ```
 
-Security is disabled for Elasticsearch in `docker-compose.yml`:
+Security is intentionally disabled for this lab environment:
 
 ```yaml
 xpack.security.enabled=false
 ```
 
-This setup is intended for a local lab environment, not production.
+## Running the Stack
 
-## Start the ELK Stack
-
-From the project root:
+Start all containers from the project root:
 
 ```powershell
 docker compose up -d --build
 ```
 
-Check container status:
+Verify all 5 containers are running:
 
 ```powershell
-docker compose ps
+docker ps
 ```
 
-Open Kibana:
+Access the interfaces:
 
-```text
-http://localhost:5601
 ```
-
-Check Elasticsearch:
-
-```text
-http://localhost:9200
+Kibana:        http://localhost:5601
+Elasticsearch: http://localhost:9200
+Microservice:  http://localhost:5000
 ```
 
 ## Checkout Microservice
 
-The checkout service exposes:
+The Flask application simulates realistic e-commerce checkout behavior.
+It randomly generates four scenarios with weighted probabilities:
 
-- `GET /health`
-- `GET /products`
-- `GET /checkout`
+| Scenario | Weight | HTTP Code |
+|---|---|---|
+| success | 60% | 200 |
+| timeout | 15% | 408 |
+| payment_failed | 15% | 402 |
+| out_of_stock | 10% | 404 |
 
-Test it from the host:
+Available endpoints:
+
+```
+GET /health     → service health check
+GET /products   → product catalog
+GET /checkout   → simulated checkout transaction
+```
+
+Generate continuous traffic:
 
 ```powershell
-Invoke-WebRequest http://localhost:5000/health
-Invoke-WebRequest http://localhost:5000/products
-Invoke-WebRequest http://localhost:5000/checkout
+cd microservice
+powershell -ExecutionPolicy Bypass -File generate_traffic.ps1
 ```
 
-Generate continuous sample traffic:
+Logs are written as structured JSON to stdout, collected automatically
+by the Filebeat container via the Docker socket.
 
-```powershell
-.\microservice\generate_traffic.ps1
-```
+## Nginx Edge Node
 
-The service writes JSON logs to stdout. The Docker Filebeat container reads those logs and sends only the `checkout-microservice` container logs to Logstash.
+The Nginx web server runs on an external Ubuntu VM.
+Filebeat is installed on the VM and ships access logs to Logstash.
 
-## Nginx VM Setup
-
-Nginx runs on a separate Ubuntu VM.
-
-Copy this config to the VM Filebeat config path:
-
-```text
-server conf files/nginx/filebeat.yml
-```
-
-Typical destination on Ubuntu:
+Deploy the Filebeat configuration to the VM:
 
 ```bash
-/etc/filebeat/filebeat.yml
+sudo cp "server conf files/nginx/filebeat.yml" /etc/filebeat/filebeat.yml
 ```
 
-Important setting:
+Update the Logstash host IP in the config:
 
 ```yaml
 output.logstash:
-  hosts: ["192.168.230.1:5044"]
+  hosts: ["<ELK_HOST_IP>:5044"]
 ```
 
-Replace `192.168.230.1` with the IP address of the machine running Docker Compose if it changes.
-
-Restart Filebeat on the Ubuntu VM:
+Generate mixed HTTP 200 and 404 traffic on the VM:
 
 ```bash
-sudo filebeat test config
-sudo filebeat test output
+# Generate 200 responses
+for i in {1..20}; do curl -s http://localhost/ > /dev/null; done
+
+# Generate 404 responses
+for i in {1..20}; do curl -s http://localhost/admin > /dev/null; done
+for i in {1..20}; do curl -s http://localhost/checkout > /dev/null; done
+```
+
+Restart Filebeat after configuration changes:
+
+```bash
 sudo systemctl restart filebeat
 sudo systemctl status filebeat
 ```
 
-The Nginx Filebeat config reads:
+## Windows Edge Node
 
-```text
-/var/log/nginx/access.log
+Winlogbeat runs on a Windows machine and ships Security Event logs.
+
+Deploy the configuration:
+
+```
+server conf files/windows/winlogbeat.yml
+→ C:\Program Files\Winlogbeat\winlogbeat.yml
 ```
 
-Generate Nginx traffic by visiting the Nginx VM in a browser or with curl:
-
-```bash
-curl http://localhost
-```
-
-## Windows Server VM Setup
-
-Windows Server runs on a separate VM.
-
-Copy this config to the Winlogbeat install directory:
-
-```text
-server conf files/windows server/winlogbeat.yml
-```
-
-Typical destination:
-
-```text
-C:\Program Files\Winlogbeat\winlogbeat.yml
-```
-
-Important setting:
+Update the Logstash host:
 
 ```yaml
 output.logstash:
-  hosts: ["192.168.230.1:5044"]
+  hosts: ["<ELK_HOST_IP>:5044"]
 ```
 
-Replace `192.168.230.1` with the IP address of the machine running Docker Compose if it changes.
+The following Security Event IDs are collected:
 
-This config collects Windows Security events:
+| Event ID | Description |
+|---|---|
+| 4624 | Successful logon |
+| 4625 | Failed logon (brute-force detection) |
 
-- `4624`: successful logon
-- `4625`: failed logon
-
-Run these commands in PowerShell as Administrator on the Windows Server VM:
+Start Winlogbeat as Administrator:
 
 ```powershell
 cd "C:\Program Files\Winlogbeat"
-.\winlogbeat.exe test config
-.\winlogbeat.exe test output
-Start-Service winlogbeat
-Get-Service winlogbeat
+.\winlogbeat.exe -e -c winlogbeat.yml
 ```
 
-Generate sample Windows events by logging in successfully or attempting a login with an incorrect password.
+Trigger test events by attempting a login with an incorrect password
+several times, then logging in successfully.
 
-## Logstash Routing
+## Logstash Pipeline
 
-Logstash listens on port `5044` for Beats input.
+Logstash applies different processing rules per source:
 
-It writes logs to these Elasticsearch indices:
+**Nginx logs** → Grok pattern parses raw access log strings into
+structured fields: `client_ip`, `http_method`, `request_path`,
+`status_code`, `response_size`, `user_agent`
 
-```text
+**Microservice logs** → JSON filter parses structured application
+logs into the `app.*` field namespace
+
+**Windows logs** → Mutate filter tags events with
+`service_type: windows` — no parsing needed as Winlogbeat
+pre-structures the fields
+
+Output indices:
+
+```
 nginx-logs-YYYY.MM.dd
 microservice-logs-YYYY.MM.dd
 windows-logs-YYYY.MM.dd
 ```
 
-Routing rules are defined in:
+## Kibana Setup
 
-```text
-logstash.conf
+Create three Data Views after starting the stack:
+
+| Data View Name | Index Pattern | Timestamp |
+|---|---|---|
+| Nginx Logs | `nginx-logs-*` | `@timestamp` |
+| Microservice Logs | `microservice-logs-*` | `@timestamp` |
+| Windows Logs | `windows-logs-*` | `@timestamp` |
+
+Useful KQL filters for exploration:
+
+```
+service_type: "nginx"
+service_type: "microservice"
+service_type: "windows"
+tags: "error"
+app.level: "WARNING"
+winlog.event_id: "4625"
 ```
 
-Nginx logs are parsed with a Grok pattern, microservice logs are parsed as JSON, and Windows logs are tagged as `service_type: windows`.
+## Verifying Data Flow
 
-## Kibana
-
-In Kibana, create data views for:
-
-```text
-nginx-logs-*
-microservice-logs-*
-windows-logs-*
-```
-
-Use `@timestamp` as the time field.
-
-Useful filters:
-
-```text
-service_type: nginx
-service_type: microservice
-service_type: windows
-tags: error
-tags: success
-```
-
-## Troubleshooting
-
-Check Logstash logs:
+Check Elasticsearch indices and document counts:
 
 ```powershell
-docker logs logstash
+Invoke-RestMethod "http://localhost:9200/_cat/indices?v"
 ```
 
-Check Filebeat container logs:
+Check Logstash is receiving data:
 
 ```powershell
-docker logs filebeat
+docker logs logstash --tail 50
 ```
 
-Check Elasticsearch indices:
+Check Filebeat container is running:
 
 ```powershell
-Invoke-RestMethod http://localhost:9200/_cat/indices?v
+docker logs filebeat --tail 50
 ```
 
-Check that Logstash port `5044` is reachable from each VM:
-
-```powershell
-Test-NetConnection 192.168.230.1 -Port 5044
-```
-
-On Ubuntu:
+Test connectivity from external VMs to Logstash port:
 
 ```bash
-nc -vz 192.168.230.1 5044
+# On Ubuntu VM
+nc -vz <ELK_HOST_IP> 5044
+
+# On Windows
+Test-NetConnection <ELK_HOST_IP> -Port 5044
 ```
 
-If VM logs are not arriving:
+## Stopping the Stack
 
-- Confirm the VM can reach the ELK host IP.
-- Confirm port `5044` is open in the host firewall.
-- Confirm Filebeat or Winlogbeat is running on the VM.
-- Confirm the `hosts` value points to the Docker Compose host, not to the VM itself.
-
-## Stop the Stack
+Stop containers while preserving data:
 
 ```powershell
 docker compose down
 ```
 
-To remove volumes and delete Elasticsearch/Kibana/Logstash data:
+Stop and delete all data volumes:
 
 ```powershell
 docker compose down -v
+```
 ```
